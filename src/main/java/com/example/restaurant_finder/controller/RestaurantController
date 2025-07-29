@@ -1,0 +1,27 @@
+package com.example.restaurant_finder.controller; // --- 4. REST Controller ---
+
+import com.example.restaurant_finder.service.RestaurantSearchService;
+import java.io.IOException;
+import java.util.List;
+import java.util.Map;
+import org.springframework.web.bind.annotation.*;
+
+@RestController
+@RequestMapping("/restaurants")
+public class RestaurantController {
+  private final RestaurantSearchService searchService;
+
+  public RestaurantController(RestaurantSearchService searchService) {
+    this.searchService = searchService;
+  }
+
+  @GetMapping("/nearby")
+  public List<Map<String, Object>> getNearbyRestaurants(
+      @RequestParam double lat,
+      @RequestParam double lon,
+      @RequestParam(defaultValue = "500") int radius,
+      @RequestParam(defaultValue = "5") int limit)
+      throws IOException {
+    return searchService.findNearby(lat, lon, radius, limit);
+  }
+}
