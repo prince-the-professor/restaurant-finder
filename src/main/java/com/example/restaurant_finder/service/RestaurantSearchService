@@ -1,0 +1,90 @@
+package com.example.restaurant_finder.service;
+
+import co.elastic.clients.elasticsearch.ElasticsearchClient;
+import co.elastic.clients.elasticsearch._types.GeoLocation;
+// import co.elastic.clients.elasticsearch._types.GeoPoint;
+import co.elastic.clients.elasticsearch._types.Script;
+import co.elastic.clients.elasticsearch._types.ScriptSortType;
+import co.elastic.clients.elasticsearch._types.SortOrder;
+import co.elastic.clients.elasticsearch._types.query_dsl.GeoDistanceQuery;
+import co.elastic.clients.elasticsearch._types.query_dsl.Query;
+import co.elastic.clients.elasticsearch.core.SearchRequest;
+import co.elastic.clients.elasticsearch.core.SearchResponse;
+import co.elastic.clients.elasticsearch.core.search.Hit;
+import co.elastic.clients.json.JsonData;
+import com.example.restaurant_finder.entity.Restaurant;
+import java.io.IOException;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import org.springframework.stereotype.Service;
+
+@Service
+public class RestaurantSearchService {
+  private final ElasticsearchClient esClient;
+
+  public RestaurantSearchService(ElasticsearchClient esClient) {
+    this.esClient = esClient;
+  }
+
+  public List<Map<String, Object>> findNearby(double lat, double lon, int radiusMeters, int limit)
+      throws IOException {
+    GeoLocation geoLocation = GeoLocation.of(g -> g.text(lat + "," + lon));
+
+    Query geoQuery =
+        GeoDistanceQuery.of(
+                g -> g.field("location").distance(radiusMeters + "m").location(geoLocation))
+            ._toQuery();
+
+    // Create script params
+    Map<String, JsonData> params = new HashMap<>();
+    params.put("lat", JsonData.of(lat));
+    params.put("lon", JsonData.of(lon));
+
+    Script distanceScript =
+        Script.of(
+            s ->
+                s.lang("painless")
+                    .source("doc['location'].arcDistance(params.lat, params.lon)")
+                    .params(params));
+
+    SearchRequest searchRequest =
+        SearchRequest.of(
+            s ->
+                s.index("restaurants")
+                    .query(geoQuery)
+                    .size(limit)
+                    .source(src -> src.filter(f -> f.includes("*")))
+                    .scriptFields(
+                        "distance_meters", sf -> sf.script(distanceScript)) // ✅ Add to response
+                    .sort(
+                        sort ->
+                            sort.script(
+                                scriptSort ->
+                                    scriptSort
+                                        .script(distanceScript)
+                                        .type(ScriptSortType.Number)
+                                        .order(SortOrder.Desc))));
+
+    SearchResponse<Restaurant> response = esClient.search(searchRequest, Restaurant.class);
+
+    List<Map<String, Object>> list = new ArrayList<>();
+    for (Hit<Restaurant> restaurantHit : response.hits().hits()) {
+      Restaurant restaurant = restaurantHit.source();
+      Double distance =
+          (Double) restaurantHit.fields().get("distance_meters").to(List.class).get(0);
+
+      Map<String, Object> result = new HashMap<>();
+      result.put("name", restaurant.getName());
+      result.put("rating", restaurant.getRating());
+      result.put("reviewCount", restaurant.getReviewCount());
+      result.put("location", restaurant.getLocation());
+      result.put("distance_meters", distance);
+
+      Map<String, Object> apply = result;
+      list.add(apply);
+    }
+    return list;
+  }
+}
